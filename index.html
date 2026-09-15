@@ -169,10 +169,15 @@ function prog(p){ bar.style.display=(p===null)?'none':'block'; if(p!==null) barI
 /* ================= motores de OCR ================= */
 async function detectarMotores(){
   motores = [];
-  try{
-    const r = await fetch('api/engines', {cache:'no-store'});
-    if(r.ok && (await r.json()).windows) motores.push({id:'win', nom:'Windows OCR (nativo)'});
-  }catch(e){}
+  // El motor nativo solo existe cuando la app corre con server.py en la PC.
+  // Fuera de ahi ni preguntamos, para no ensuciar la consola con un 404.
+  const local = ['localhost','127.0.0.1','[::1]'].indexOf(location.hostname) !== -1;
+  if(local){
+    try{
+      const r = await fetch('api/engines', {cache:'no-store'});
+      if(r.ok && (await r.json()).windows) motores.push({id:'win', nom:'Windows OCR (nativo)'});
+    }catch(e){}
+  }
   if('TextDetector' in window) motores.push({id:'td', nom:'OCR del sistema (Android)'});
   motores.push({id:'tess', nom:'Tesseract.js (universal)'});
   const sel0 = $('motor');
