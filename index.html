@@ -1,0 +1,661 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<link rel="manifest" href="manifest.webmanifest">
+<title>OCR de Tarjetas</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#181b22; --panel2:#1f232c; --line:#2b313d;
+    --txt:#e8eaf0; --dim:#9aa3b2; --acc:#4f8cff; --ok:#3ec98a; --err:#ff7a7a;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  /* .row usa display:flex y le gana al display:none que el navegador aplica
+     a [hidden]; sin esto los controles del recorte se ven antes de capturar. */
+  [hidden]{display:none !important}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  header{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;
+         align-items:center;gap:10px;flex-wrap:wrap}
+  h1{font-size:16px;margin:0;font-weight:600}
+  .sub{color:var(--dim);font-size:12px}
+  main{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:14px;max-width:1400px;margin:0 auto}
+  @media(max-width:900px){main{grid-template-columns:1fr;padding:10px;gap:10px}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);
+           margin:0;padding:10px 13px;border-bottom:1px solid var(--line);background:var(--panel2)}
+  .body{padding:12px}
+  .videowrap{position:relative;background:#000;aspect-ratio:4/3;overflow:hidden}
+  video{width:100%;height:100%;object-fit:cover;display:block}
+  .guide{position:absolute;inset:0;pointer-events:none;display:flex;align-items:center;justify-content:center}
+  .guide div{width:82%;aspect-ratio:85/55;border:2px dashed rgba(79,140,255,.75);border-radius:6px}
+  .row{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+  button{background:var(--panel2);color:var(--txt);border:1px solid var(--line);
+         border-radius:7px;padding:9px 13px;font-size:13px;cursor:pointer;font-weight:500}
+  button:hover:not(:disabled){border-color:var(--acc)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+  button.big{padding:12px 18px;font-size:14px}
+  select,input[type=file]{background:var(--panel2);color:var(--txt);border:1px solid var(--line);
+         border-radius:7px;padding:8px 10px;font-size:13px;max-width:100%}
+  label.chk{display:flex;align-items:center;gap:6px;color:var(--dim);font-size:12px;cursor:pointer}
+  input[type=range]{accent-color:var(--acc);width:150px}
+  #wrapCrop{position:relative;background:#0b0d11;border:1px solid var(--line);border-radius:8px;
+            overflow:hidden;display:none}
+  #crop{display:block;width:100%;touch-action:none;cursor:crosshair}
+  .bar{height:5px;background:var(--panel2);border-radius:99px;overflow:hidden;margin-top:10px;display:none}
+  .bar i{display:block;height:100%;width:0;background:var(--acc);transition:width .2s}
+  .status{color:var(--dim);font-size:12px;margin-top:8px;min-height:18px}
+  .status.err{color:var(--err)} .status.ok{color:var(--ok)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  td.k{color:var(--dim);white-space:nowrap;width:1%;padding-right:14px}
+  td.v{font-family:ui-monospace,Consolas,monospace;word-break:break-word}
+  td.v:empty::after{content:'\2014';color:#555}
+  textarea{width:100%;min-height:190px;background:#0b0d11;color:var(--txt);border:1px solid var(--line);
+           border-radius:8px;padding:11px;font:12.5px/1.6 ui-monospace,Consolas,monospace;resize:vertical}
+  .hint{color:var(--dim);font-size:12px;margin:8px 0 0}
+  .badge{font-size:11px;padding:2px 7px;border-radius:99px;background:var(--panel2);
+         border:1px solid var(--line);color:var(--dim)}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>OCR de Tarjetas</h1>
+  <span class="sub">capturar &rarr; recortar la tarjeta &rarr; texto plano</span>
+  <span class="badge" id="badge">motor: detectando...</span>
+</header>
+
+<main>
+  <section class="card">
+    <h2>1 &middot; C&aacute;mara</h2>
+    <div class="videowrap">
+      <video id="video" autoplay playsinline muted></video>
+      <div class="guide"><div></div></div>
+    </div>
+    <div class="body">
+      <div class="row">
+        <button id="btnStart" class="big">Encender c&aacute;mara</button>
+        <button id="btnShot" class="primary big" disabled>Capturar</button>
+        <select id="cams" title="c&aacute;mara"><option value="">Buscando c&aacute;maras...</option></select>
+      </div>
+      <div class="row" style="margin-top:9px">
+        <input type="file" id="file" accept="image/*" capture="environment">
+        <span class="sub">...o us&aacute; una foto existente</span>
+      </div>
+      <div class="status" id="st">Presion&aacute; &laquo;Encender c&aacute;mara&raquo;.</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>2 &middot; Recorte de la tarjeta</h2>
+    <div class="body">
+      <div id="wrapCrop"><canvas id="crop"></canvas></div>
+      <p class="hint" id="noshot">Cuando captures, ac&aacute; vas a poder ajustar el recuadro para dejar
+         <b>solo la tarjeta</b>. Es lo que m&aacute;s mejora el resultado: el fondo, la mano y el resto de
+         la escena confunden al OCR.</p>
+      <div class="row" style="margin-top:10px" id="ctrlCrop" hidden>
+        <button id="btnRead" class="primary big">Leer selecci&oacute;n</button>
+        <button id="btnAuto">Detectar tarjeta</button>
+        <button id="btnAll">Usar todo</button>
+        <button id="btnRotL" title="rotar 90 grados a la izquierda">&#8630;</button>
+        <button id="btnRotR" title="rotar 90 grados a la derecha">&#8631;</button>
+      </div>
+      <div class="row" style="margin-top:9px" id="ctrlFino" hidden>
+        <label class="chk">Inclinaci&oacute;n
+          <input type="range" id="fino" min="-12" max="12" step="0.5" value="0">
+          <span id="finoVal" class="sub">0&deg;</span>
+        </label>
+        <label class="chk"><input type="checkbox" id="pre"> Forzar blanco y negro</label>
+      </div>
+      <div class="bar" id="bar"><i></i></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>3 &middot; Datos detectados</h2>
+    <div class="body">
+      <table>
+        <tr><td class="k">Nombre</td><td class="v" id="f_nombre"></td></tr>
+        <tr><td class="k">Cargo</td><td class="v" id="f_cargo"></td></tr>
+        <tr><td class="k">Empresa</td><td class="v" id="f_empresa"></td></tr>
+        <tr><td class="k">Email</td><td class="v" id="f_email"></td></tr>
+        <tr><td class="k">Tel&eacute;fonos</td><td class="v" id="f_tel"></td></tr>
+        <tr><td class="k">Web</td><td class="v" id="f_web"></td></tr>
+        <tr><td class="k">Direcci&oacute;n</td><td class="v" id="f_dir"></td></tr>
+        <tr><td class="k">CUIT / ID</td><td class="v" id="f_cuit"></td></tr>
+      </table>
+      <div class="row" style="margin-top:11px">
+        <button id="btnCopyF">Copiar datos</button>
+        <button id="btnVcf">Contacto .vcf</button>
+        <button id="btnTxt">.txt</button>
+        <button id="btnCsv">.csv</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>4 &middot; Texto plano</h2>
+    <div class="body">
+      <textarea id="raw" placeholder="Texto tal cual lo leyo el OCR. Es editable."></textarea>
+      <div class="row" style="margin-top:9px">
+        <button id="btnCopyR">Copiar texto</button>
+        <button id="btnReparse">Re-analizar</button>
+        <select id="motor" title="motor de OCR"></select>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const video=$('video'), st=$('st'), bar=$('bar'), barI=bar.firstElementChild;
+const cropCv=$('crop'), cropCtx=cropCv.getContext('2d');
+
+let stream=null, worker=null, lastFields=null;
+let imgOriginal=null;      // imagen capturada
+let base=null;             // canvas ya rotado, sobre el que se elige el recorte
+let giro=0, fino=0;        // rotacion de 90 en 90 y ajuste fino
+let sel=null;              // {x,y,w,h} en pixeles de `base`
+let motores=[];
+
+function say(m,c){ st.textContent=m; st.className='status '+(c||''); }
+function prog(p){ bar.style.display=(p===null)?'none':'block'; if(p!==null) barI.style.width=(p*100).toFixed(0)+'%'; }
+
+/* ================= motores de OCR ================= */
+async function detectarMotores(){
+  motores = [];
+  try{
+    const r = await fetch('api/engines', {cache:'no-store'});
+    if(r.ok && (await r.json()).windows) motores.push({id:'win', nom:'Windows OCR (nativo)'});
+  }catch(e){}
+  if('TextDetector' in window) motores.push({id:'td', nom:'OCR del sistema (Android)'});
+  motores.push({id:'tess', nom:'Tesseract.js (universal)'});
+  const sel0 = $('motor');
+  sel0.innerHTML = motores.map(m=>'<option value="'+m.id+'">'+m.nom+'</option>').join('');
+  // El navegador restaura la opcion elegida antes de recargar, y puede dejar
+  // seleccionado un motor peor que el mejor disponible ahora: forzamos el primero.
+  sel0.selectedIndex = 0;
+  const sincronizar = () => { $('badge').textContent = 'motor: ' + sel0.selectedOptions[0].text; };
+  sincronizar();
+  sel0.onchange = sincronizar;
+}
+
+function canvasABlob(cv){ return new Promise(r => cv.toBlob(r, 'image/png')); }
+
+async function ocrWindows(cv){
+  const blob = await canvasABlob(cv);
+  const r = await fetch('api/ocr', {method:'POST', headers:{'Content-Type':'image/png'}, body:blob});
+  const j = await r.json();
+  if(!j.ok) throw new Error(j.error || 'fallo el OCR nativo');
+  return j.texto || '';
+}
+
+async function ocrTextDetector(cv){
+  const det = new TextDetector();
+  const bloques = await det.detect(cv);
+  bloques.sort((a,b)=> a.boundingBox.y - b.boundingBox.y);
+  return bloques.map(b=>b.rawValue).join('\n');
+}
+
+async function ocrTesseract(cv){
+  if(!worker){
+    say('Cargando Tesseract (~15 MB la primera vez)...');
+    prog(0.05);
+    worker = await Tesseract.createWorker('spa+eng', 1, {
+      logger: m => { if(m.status==='recognizing text') prog(m.progress); }
+    });
+    await worker.setParameters({ preserve_interword_spaces:'1' });
+  }
+  prog(0);
+  const res = await worker.recognize(cv);
+  return res.data.text || '';
+}
+
+/* ================= camara ================= */
+async function listCams(){
+  try{
+    const ds = (await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='videoinput');
+    const prev = $('cams').value;
+    $('cams').innerHTML = ds.length
+      ? ds.map((d,i)=>'<option value="'+d.deviceId+'">'+(d.label||('Cámara '+(i+1)))+'</option>').join('')
+      : '<option value="">(sin cámaras)</option>';
+    if(prev) $('cams').value = prev;
+  }catch(e){}
+}
+
+async function startCam(){
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    say('Este navegador no da acceso a la cámara. Abrí la página por http://localhost o https.','err');
+    return;
+  }
+  if(stream) stream.getTracks().forEach(t=>t.stop());
+  const id = $('cams').value;
+  const v = { width:{ideal:2560}, height:{ideal:1440} };
+  if(id) v.deviceId = {exact:id}; else v.facingMode = {ideal:'environment'};
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({video:v, audio:false});
+    video.srcObject = stream;
+    try{ await video.play(); }catch(e){}
+    await listCams();
+    const s = stream.getVideoTracks()[0].getSettings();
+    $('btnShot').disabled = false;
+    say('Cámara activa ('+s.width+'x'+s.height+'). Llená el cuadro con la tarjeta y capturá.','ok');
+  }catch(e){
+    say('No se pudo abrir la cámara: '+e.name+' - '+e.message,'err');
+  }
+}
+
+/* ================= rotacion + recorte ================= */
+function construirBase(){
+  const w = imgOriginal.width || imgOriginal.naturalWidth;
+  const h = imgOriginal.height || imgOriginal.naturalHeight;
+  const rad = (giro + fino) * Math.PI/180;
+  const cos = Math.abs(Math.cos(rad)), sin = Math.abs(Math.sin(rad));
+  const bw = Math.round(w*cos + h*sin), bh = Math.round(w*sin + h*cos);
+  base = document.createElement('canvas');
+  base.width = bw; base.height = bh;
+  const c = base.getContext('2d');
+  c.fillStyle = '#000'; c.fillRect(0,0,bw,bh);
+  c.translate(bw/2, bh/2); c.rotate(rad);
+  c.drawImage(imgOriginal, -w/2, -h/2, w, h);
+}
+
+function dibujarCrop(){
+  const maxW = cropCv.parentElement.clientWidth || 600;
+  const esc = Math.min(1, maxW / base.width);
+  cropCv.width = Math.round(base.width*esc);
+  cropCv.height = Math.round(base.height*esc);
+  cropCtx.drawImage(base, 0, 0, cropCv.width, cropCv.height);
+  if(!sel) return;
+  const s = cropCv.width / base.width;
+  const x=sel.x*s, y=sel.y*s, w=sel.w*s, h=sel.h*s;
+  cropCtx.save();
+  cropCtx.fillStyle='rgba(0,0,0,.55)';
+  cropCtx.fillRect(0,0,cropCv.width,y);
+  cropCtx.fillRect(0,y+h,cropCv.width,cropCv.height-y-h);
+  cropCtx.fillRect(0,y,x,h);
+  cropCtx.fillRect(x+w,y,cropCv.width-x-w,h);
+  cropCtx.strokeStyle='#4f8cff'; cropCtx.lineWidth=2;
+  cropCtx.strokeRect(x,y,w,h);
+  cropCtx.fillStyle='#4f8cff';
+  [[x,y],[x+w,y],[x,y+h],[x+w,y+h]].forEach(p=>cropCtx.fillRect(p[0]-7,p[1]-7,14,14));
+  cropCtx.restore();
+}
+
+/* Detecta la mancha clara mas grande = la tarjeta (sobre una copia chica). */
+function detectarTarjeta(){
+  const W=220, H=Math.max(1, Math.round(base.height*W/base.width));
+  const t=document.createElement('canvas'); t.width=W; t.height=H;
+  const tc=t.getContext('2d', {willReadFrequently:true});
+  tc.drawImage(base,0,0,W,H);
+  const d=tc.getImageData(0,0,W,H).data;
+  const g=new Uint8Array(W*H), hist=new Array(256).fill(0);
+  for(let i=0,p=0;i<d.length;i+=4,p++){
+    const v=(d[i]*0.299+d[i+1]*0.587+d[i+2]*0.114)|0; g[p]=v; hist[v]++;
+  }
+  const tot=W*H;
+  let sum=0; for(let i=0;i<256;i++) sum+=i*hist[i];
+  let sumB=0, wB=0, mx=0, umb=128;
+  for(let i=0;i<256;i++){
+    wB+=hist[i]; if(!wB) continue;
+    const wF=tot-wB; if(!wF) break;
+    sumB+=i*hist[i];
+    const entre=wB*wF*Math.pow(sumB/wB-(sum-sumB)/wF,2);
+    if(entre>mx){ mx=entre; umb=i; }
+  }
+  const vis=new Uint8Array(tot), pila=[];
+  let mejor=null, mejorN=0;
+  for(let p0=0;p0<tot;p0++){
+    if(vis[p0] || g[p0]<=umb) continue;
+    pila.length=0; pila.push(p0); vis[p0]=1;
+    let n=0, x0=W, y0=H, x1=0, y1=0;
+    while(pila.length){
+      const p=pila.pop(), x=p%W, y=(p/W)|0;
+      n++;
+      if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y;
+      if(x>0   && !vis[p-1] && g[p-1]>umb){vis[p-1]=1;pila.push(p-1);}
+      if(x<W-1 && !vis[p+1] && g[p+1]>umb){vis[p+1]=1;pila.push(p+1);}
+      if(y>0   && !vis[p-W] && g[p-W]>umb){vis[p-W]=1;pila.push(p-W);}
+      if(y<H-1 && !vis[p+W] && g[p+W]>umb){vis[p+W]=1;pila.push(p+W);}
+    }
+    if(n>mejorN){ mejorN=n; mejor=[x0,y0,x1,y1]; }
+  }
+  const esc = base.width/W;
+  if(!mejor || mejorN < tot*0.06){
+    sel = {x:base.width*0.08, y:base.height*0.08, w:base.width*0.84, h:base.height*0.84};
+  }else{
+    const m=2;
+    sel = { x:Math.max(0,(mejor[0]-m)*esc), y:Math.max(0,(mejor[1]-m)*esc),
+            w:(mejor[2]-mejor[0]+2*m)*esc, h:(mejor[3]-mejor[1]+2*m)*esc };
+    sel.w = Math.min(sel.w, base.width-sel.x);
+    sel.h = Math.min(sel.h, base.height-sel.y);
+  }
+}
+
+/* --- interaccion del recuadro (mouse y dedo) --- */
+let arrastre=null;
+function posEn(e){
+  const r = cropCv.getBoundingClientRect();
+  if(!r.width) return null;              // sin layout todavia: evita NaN
+  const s = base.width / r.width;
+  return { x:(e.clientX-r.left)*s, y:(e.clientY-r.top)*s };
+}
+cropCv.addEventListener('pointerdown', e=>{
+  if(!base) return;
+  const p = posEn(e);
+  if(!p) return;
+  cropCv.setPointerCapture(e.pointerId);
+  const tol = 18 * base.width / cropCv.getBoundingClientRect().width;
+  if(sel){
+    const pts = [[sel.x,sel.y],[sel.x+sel.w,sel.y],[sel.x,sel.y+sel.h],[sel.x+sel.w,sel.y+sel.h]];
+    for(let i=0;i<4;i++){
+      if(Math.abs(p.x-pts[i][0])<tol && Math.abs(p.y-pts[i][1])<tol){
+        arrastre={modo:'esq', fijo:{x:pts[3-i][0], y:pts[3-i][1]}}; return;
+      }
+    }
+    if(p.x>sel.x && p.x<sel.x+sel.w && p.y>sel.y && p.y<sel.y+sel.h){
+      arrastre={modo:'mover', dx:p.x-sel.x, dy:p.y-sel.y}; return;
+    }
+  }
+  arrastre={modo:'esq', fijo:{x:p.x, y:p.y}};
+  sel={x:p.x,y:p.y,w:0,h:0};
+});
+cropCv.addEventListener('pointermove', e=>{
+  if(!arrastre || !base) return;
+  const p = posEn(e);
+  if(!p) return;
+  const cl=(v,a,b)=>Math.max(a,Math.min(b,v));
+  if(arrastre.modo==='esq'){
+    const x1=cl(p.x,0,base.width), y1=cl(p.y,0,base.height);
+    sel={ x:Math.min(arrastre.fijo.x,x1), y:Math.min(arrastre.fijo.y,y1),
+          w:Math.abs(x1-arrastre.fijo.x), h:Math.abs(y1-arrastre.fijo.y) };
+  }else{
+    sel.x = cl(p.x-arrastre.dx, 0, base.width-sel.w);
+    sel.y = cl(p.y-arrastre.dy, 0, base.height-sel.h);
+  }
+  dibujarCrop();
+});
+['pointerup','pointercancel'].forEach(ev=>cropCv.addEventListener(ev, ()=>{ arrastre=null; }));
+
+/* ================= preparar imagen para el OCR ================= */
+function recorteParaOCR(){
+  if(!sel || sel.w<20 || sel.h<20) sel={x:0,y:0,w:base.width,h:base.height};
+  const objetivo = 2200;
+  const esc = Math.min(3, Math.max(1, objetivo/sel.w));
+  const o = document.createElement('canvas');
+  o.width = Math.round(sel.w*esc); o.height = Math.round(sel.h*esc);
+  const c = o.getContext('2d', {willReadFrequently:true});
+  c.imageSmoothingQuality = 'high';
+  c.drawImage(base, sel.x, sel.y, sel.w, sel.h, 0, 0, o.width, o.height);
+  if($('pre').checked) binarizar(o);
+  return o;
+}
+
+/* Umbral adaptativo (Bradley) con imagen integral: aguanta luz despareja y reflejos. */
+function binarizar(cv){
+  const c = cv.getContext('2d', {willReadFrequently:true});
+  const im = c.getImageData(0,0,cv.width,cv.height), d = im.data;
+  const W=cv.width, H=cv.height;
+  const g = new Float64Array(W*H);
+  for(let i=0,p=0;i<d.length;i+=4,p++) g[p] = d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114;
+  const int = new Float64Array((W+1)*(H+1));
+  for(let y=0;y<H;y++){
+    let fila=0;
+    for(let x=0;x<W;x++){
+      fila += g[y*W+x];
+      int[(y+1)*(W+1)+(x+1)] = int[y*(W+1)+(x+1)] + fila;
+    }
+  }
+  const r = Math.max(8, Math.round(W/28)), T = 0.86;
+  for(let y=0;y<H;y++){
+    const y0=Math.max(0,y-r), y1=Math.min(H-1,y+r);
+    for(let x=0;x<W;x++){
+      const x0=Math.max(0,x-r), x1=Math.min(W-1,x+r);
+      const area=(x1-x0+1)*(y1-y0+1);
+      const suma = int[(y1+1)*(W+1)+(x1+1)] - int[y0*(W+1)+(x1+1)]
+                 - int[(y1+1)*(W+1)+x0]     + int[y0*(W+1)+x0];
+      const v = (g[y*W+x]*area <= suma*T) ? 0 : 255;
+      const p=(y*W+x)*4; d[p]=d[p+1]=d[p+2]=v; d[p+3]=255;
+    }
+  }
+  c.putImageData(im,0,0);
+}
+
+/* ================= flujo principal ================= */
+function mostrarCaptura(img, autoLeer){
+  imgOriginal = img; giro=0; fino=0;
+  $('fino').value=0; $('finoVal').textContent='0°';
+  construirBase();
+  detectarTarjeta();
+  $('wrapCrop').style.display='block';
+  $('noshot').style.display='none';
+  $('ctrlCrop').hidden=false; $('ctrlFino').hidden=false;
+  dibujarCrop();
+  // en el celular el recorte queda debajo del pliegue: lo traemos a la vista
+  try{ $('wrapCrop').scrollIntoView({behavior:'smooth', block:'center'}); }catch(e){}
+  if(autoLeer) leer();
+}
+
+async function leer(){
+  if(!base) return;
+  const cv = recorteParaOCR();
+  const id = $('motor').value;
+  $('btnRead').disabled = true;
+  try{
+    say('Leyendo con ' + $('motor').selectedOptions[0].text + '...');
+    prog(0);
+    let texto = '';
+    if(id==='win')     texto = await ocrWindows(cv);
+    else if(id==='td') texto = await ocrTextDetector(cv);
+    else               texto = await ocrTesseract(cv);
+    prog(null);
+    texto = texto.replace(/\r/g,'').replace(/[ \t]+\n/g,'\n').trim();
+    $('raw').value = texto;
+    parseAndShow(texto);
+    if(texto) say('Listo: '+texto.split('\n').length+' líneas. Si algo salió mal, ajustá el recuadro y leé de nuevo.','ok');
+    else say('No se leyó texto. Probá ajustar el recuadro, mejorar la luz o cambiar de motor.','err');
+  }catch(e){
+    prog(null);
+    say('Error del OCR: '+e.message+' (probá con otro motor)','err');
+  }finally{
+    $('btnRead').disabled = false;
+  }
+}
+
+/* ================= parseo de campos ================= */
+/* Ojo: nada de \s en estos patrones, que incluye \n y haria que un telefono
+   se "coma" el renglon siguiente. Solo espacios y tabs. */
+const RX_EMAIL = /[A-Za-z0-9._%+-]+[ \t]?@[ \t]?[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+const RX_WEB   = /(?:https?:\/\/[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:\/[^\s]*)?|www\.[A-Za-z0-9.-]+\.[A-Za-z]{2,})/g;
+const RX_TEL   = /\(?\+?\d[\d \t().\-]{6,}\d/g;
+const RX_CUIT  = /\b(?:20|23|24|27|30|33|34)[-\s.]?\d{8}[-\s.]?\d\b/g;
+const CARGOS  = /(gerente|director|jefe|presidente|socio|titular|encargado|responsable|analista|consultor|asesor|ingenier|licenciad|contador|abogad|arquitect|tecnic|técnic|vendedor|comercial|ejecutiv|coordinador|supervisor|manager|ceo|cto|cfo|coo|head of|owner|partner|sales|account|engineer|developer|specialist)/i;
+const EMPRESA = /(\bs\.?\s?a\.?\b|\bs\.?r\.?l\.?\b|\bs\.?a\.?s\.?\b|\bs\.?a\.?i\.?c\.?\b|\bltda?\b|\binc\b|\bllc\b|\bcorp\b|\bgroup\b|\bgrupo\b|\bstudio\b|\bconsultora\b|\bservicios\b|\bsoluciones\b|\btecnolog)/i;
+const DIREC   = /(\bcalle\b|\bav\.?\b|\bavda\.?\b|\bavenida\b|\bruta\b|\bpiso\b|\bdto\.?\b|\bdepto\.?\b|\bof\.?\s?\d|\bc\.?p\.?\s?\d|\bC\d{4}[A-Z]{3}\b|buenos aires|córdoba|cordoba|rosario|mendoza|argentina)/i;
+const TELLBL  = /(tel|teléfono|telefono|cel|celular|móvil|movil|whats|fax|phone|mobile|dir\.)/i;
+
+function limpiar(s){
+  return s.replace(/\s{2,}/g,' ')
+          .replace(/^[^\wÁÉÍÓÚÑáéíóúñ+(]+/,'')
+          .replace(/[^\wÁÉÍÓÚÑáéíóúñ).]+$/,'')
+          .trim();
+}
+function uniq(a){ return Array.from(new Set(a)); }
+function matchAll(t, rx){ return t.match(new RegExp(rx.source, rx.flags)) || []; }
+
+/* Reparaciones tipicas del OCR en mails y webs:
+   - la @ leida como Q/O/0/(a)
+   - el dominio partido con espacios ("multiradio. com ar")
+   Solo se toca cuando el final es un dominio de primer nivel conocido, para no
+   romper texto normal. */
+const TLD  = 'com|net|org|gov|edu|info|biz';
+const PAIS = 'ar|es|mx|cl|uy|br|pe|co|us|uk|it|fr|de';
+
+function repararArrobas(text){
+  const dominio = new RegExp(
+    '([A-Za-z0-9-]{2,})[.\\s]+(' + TLD + ')\\b(?:[.\\s]+(' + PAIS + ')\\b)?', 'gi');
+  const juntar = (m,a,b,c) => a + '.' + b + (c ? '.' + c : '');
+  return text
+    // (a) / (at) / (arroba)  ->  @
+    .replace(/[ \t]?\(\s?(?:a|at|arroba)\s?\)[ \t]?/gi, '@')
+    // letra suelta entre el usuario y algo con forma de dominio -> @
+    .replace(new RegExp('([A-Za-z0-9._%+-]{2,})[ \\t]?[QO0\\u00ba\\u00aa\\u00a9@][ \\t]?' +
+                        '(?=[A-Za-z0-9-]{2,}[.\\s]+(?:' + TLD + ')\\b)', 'g'), '$1@')
+    // dominio con espacios, tanto en el mail como en la web
+    .replace(new RegExp('(@|\\bwww[.\\s]+)' + dominio.source, 'gi'),
+             (m, pre, a, b, c) => (pre.charAt(0)==='@' ? '@' : 'www.') + juntar(m,a,b,c));
+}
+
+function parse(textoOriginal){
+  const text = repararArrobas(textoOriginal);
+  const lineas = text.split('\n').map(limpiar).filter(l=>l.length>1);
+  const f = { nombre:'', cargo:'', empresa:'', email:'', tel:'', web:'', dir:'', cuit:'' };
+  const dig = s => s.replace(/\D/g,'');
+
+  f.email = uniq(matchAll(text, RX_EMAIL).map(e=>e.replace(/\s/g,'').toLowerCase())).join(', ');
+  f.cuit  = uniq(matchAll(text, RX_CUIT)).join(', ');
+  f.web   = uniq(matchAll(text, RX_WEB).map(w=>w.replace(/[.,;)]+$/,''))
+              .filter(w=>w.indexOf('@')===-1)).join(', ');
+
+  const cuitDig = uniq(matchAll(text, RX_CUIT)).map(dig);
+  f.tel = uniq(matchAll(text, RX_TEL).map(limpiar)
+      .filter(t => dig(t).length>=7 && dig(t).length<=15)
+      .filter(t => cuitDig.indexOf(dig(t))===-1)).join(' | ');
+
+  const esContacto = l => /@/.test(l) || /www\.|https?:\/\//i.test(l) ||
+        (dig(l).length>=7 && new RegExp(RX_TEL.source).test(l));
+
+  for(const l of lineas){
+    if(!f.cargo && CARGOS.test(l) && l.length<60 && !/@/.test(l)) f.cargo = l;
+    if(!f.dir   && DIREC.test(l)  && !/@/.test(l) && !TELLBL.test(l)) f.dir = l;
+  }
+
+  // Empresa: entre las lineas con forma societaria, la mas larga. Si quedo solo
+  // el sufijo ("S.A."), el logo vino partido en dos renglones: los unimos.
+  const cands = lineas.filter(l => EMPRESA.test(l) && !/@/.test(l) && !esContacto(l));
+  if(cands.length){
+    f.empresa = cands.reduce((a,b)=> b.length>a.length ? b : a);
+    if(f.empresa.replace(/[^A-Za-zÀ-ÿ]/g,'').length < 5){
+      const i = lineas.indexOf(f.empresa);
+      if(i>0 && !/\d/.test(lineas[i-1]) && lineas[i-1].length<28)
+        f.empresa = lineas[i-1] + ' ' + f.empresa;
+    }
+  }
+
+  const cand = lineas.filter(l =>
+      !/\d/.test(l) && !/@/.test(l) && l.length>=5 && l.length<=42 &&
+      l.split(/\s+/).length>=2 && l.split(/\s+/).length<=4 &&
+      l!==f.cargo && l!==f.empresa && l!==f.dir &&
+      !EMPRESA.test(l) && !CARGOS.test(l) && !TELLBL.test(l));
+  cand.sort((a,b)=>{
+    const sc = s => (/^[A-ZÁÉÍÓÚÑ\s.]+$/.test(s)?2:0) +
+                    (/^([A-ZÁÉÍÓÚÑ][a-záéíóúñ'.]+\s?){2,4}$/.test(s)?2:0);
+    return sc(b)-sc(a) || lineas.indexOf(a)-lineas.indexOf(b);
+  });
+  f.nombre = cand[0]||'';
+
+  if(!f.empresa){
+    const e = lineas.find(l => l!==f.nombre && l!==f.cargo && l!==f.dir &&
+                               !esContacto(l) && !/\d{4}/.test(l));
+    if(e) f.empresa = e;
+  }
+  return f;
+}
+
+function parseAndShow(text){
+  const f = parse(text); lastFields = f;
+  $('f_nombre').textContent=f.nombre;   $('f_cargo').textContent=f.cargo;
+  $('f_empresa').textContent=f.empresa; $('f_email').textContent=f.email;
+  $('f_tel').textContent=f.tel;         $('f_web').textContent=f.web;
+  $('f_dir').textContent=f.dir;         $('f_cuit').textContent=f.cuit;
+}
+
+function fieldsText(){
+  const f = lastFields || parse($('raw').value);
+  return [['Nombre',f.nombre],['Cargo',f.cargo],['Empresa',f.empresa],['Email',f.email],
+          ['Telefonos',f.tel],['Web',f.web],['Direccion',f.dir],['CUIT/ID',f.cuit]]
+         .map(p=>p[0]+': '+(p[1]||'')).join('\n');
+}
+function bajar(nombre, contenido, tipo){
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([contenido],{type:tipo}));
+  a.download=nombre; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+}
+async function copiar(t){
+  try{ await navigator.clipboard.writeText(t); say('Copiado.','ok'); }
+  catch(e){ say('No se pudo copiar solo; seleccioná y Ctrl+C.','err'); }
+}
+
+/* ================= eventos ================= */
+$('btnStart').onclick = startCam;
+$('cams').onchange = () => { if(stream) startCam(); };
+$('btnShot').onclick = () => {
+  if(!video.videoWidth){ say('La cámara todavía no da imagen.','err'); return; }
+  const t=document.createElement('canvas');
+  t.width=video.videoWidth; t.height=video.videoHeight;
+  t.getContext('2d').drawImage(video,0,0);
+  const img=new Image();
+  img.onload=()=>mostrarCaptura(img,true);
+  img.src=t.toDataURL('image/png');
+};
+$('file').onchange = e => {
+  const f=e.target.files[0]; if(!f) return;
+  const img=new Image();
+  img.onload=()=>mostrarCaptura(img,true);
+  img.onerror=()=>say('No se pudo leer la imagen.','err');
+  img.src=URL.createObjectURL(f);
+};
+$('btnRead').onclick = leer;
+$('btnAuto').onclick = () => { detectarTarjeta(); dibujarCrop(); };
+$('btnAll').onclick  = () => { sel={x:0,y:0,w:base.width,h:base.height}; dibujarCrop(); };
+$('btnRotL').onclick = () => { giro=(giro+270)%360; construirBase(); detectarTarjeta(); dibujarCrop(); };
+$('btnRotR').onclick = () => { giro=(giro+90)%360;  construirBase(); detectarTarjeta(); dibujarCrop(); };
+$('fino').oninput = e => {
+  fino = parseFloat(e.target.value);
+  $('finoVal').textContent = fino.toFixed(1)+'°';
+  const rel = (sel && base) ? {x:sel.x/base.width, y:sel.y/base.height,
+                               w:sel.w/base.width, h:sel.h/base.height} : null;
+  construirBase();
+  if(rel) sel={x:rel.x*base.width, y:rel.y*base.height, w:rel.w*base.width, h:rel.h*base.height};
+  dibujarCrop();
+};
+$('btnReparse').onclick = () => { parseAndShow($('raw').value); say('Texto re-analizado.','ok'); };
+$('btnCopyR').onclick = () => copiar($('raw').value);
+$('btnCopyF').onclick = () => copiar(fieldsText());
+$('btnTxt').onclick = () => bajar('tarjeta.txt', fieldsText()+'\n\n--- OCR CRUDO ---\n'+$('raw').value, 'text/plain;charset=utf-8');
+$('btnCsv').onclick = () => {
+  const f = lastFields || parse($('raw').value);
+  const esc = s => '"'+String(s||'').replace(/"/g,'""')+'"';
+  bajar('tarjeta.csv', '﻿' + ['Nombre','Cargo','Empresa','Email','Telefonos','Web','Direccion','CUIT'].join(';')
+        + '\n' + [f.nombre,f.cargo,f.empresa,f.email,f.tel,f.web,f.dir,f.cuit].map(esc).join(';'),
+        'text/csv;charset=utf-8');
+};
+$('btnVcf').onclick = () => {
+  const f = lastFields || parse($('raw').value);
+  const partes = (f.nombre||'').split(/\s+/);
+  const tels = (f.tel||'').split('|').map(s=>s.trim()).filter(Boolean);
+  const v = ['BEGIN:VCARD','VERSION:3.0','FN:'+(f.nombre||''),
+             'N:'+(partes[partes.length-1]||'')+';'+(partes[0]||'')+';;;',
+             f.empresa?'ORG:'+f.empresa:'', f.cargo?'TITLE:'+f.cargo:''];
+  tels.forEach((t,i)=>v.push('TEL;TYPE='+(i?'CELL':'WORK')+':'+t));
+  if(f.email) v.push('EMAIL;TYPE=WORK:'+f.email.split(',')[0].trim());
+  if(f.web)   v.push('URL:'+f.web.split(',')[0].trim());
+  if(f.dir)   v.push('ADR;TYPE=WORK:;;'+f.dir+';;;;');
+  v.push('END:VCARD');
+  bajar((f.nombre||'contacto').replace(/\s+/g,'_')+'.vcf', v.filter(Boolean).join('\r\n'),
+        'text/vcard;charset=utf-8');
+};
+window.addEventListener('resize', ()=>{ if(base) dibujarCrop(); });
+
+detectarMotores();
+listCams();
+if(!window.isSecureContext) say('Abrí la página por http://localhost o https: si no, el navegador bloquea la cámara.','err');
+if('serviceWorker' in navigator && location.protocol==='https:') navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script>
+</body>
+</html>
